@@ -1,0 +1,431 @@
+<html>
+<head>
+    <title>报价计算</title>
+    <style type="text/css">
+        body{width:1000px;margin: 0 auto;}
+        table,th,tr,td {border:solid black 1px;text-align: center;height: 28px;padding:0px;margin:0 auto;border-spacing: 0px; }
+        /* .li {border:solid black 1px;text-align: center;height: 28px;padding:0px;margin:0 auto;border-spacing: 0px; } */
+        
+    </style>
+    <script type="text/javascript">
+        let quote = new Array(999),quote_v1 = new Array(999), quote_v2 = new Array(999);
+        let units = new Array(999);
+        var cnt, cnt_v, cnt_v2;
+        var max,min, upprice,qz,xf;
+        
+        function resetTable() {
+            var tab=document.getElementById("t_list");
+            for(var i=tab.rows.length-1; i>0; i--){
+                tab.deleteRow(i);
+            }
+        }
+        function resetArray()
+        {
+            quote = new Array(999);
+            quote_v1 = new Array(999);
+            quote_v2 = new Array(999);
+            units= new Array(999);
+        }
+        window.onload = function(e){
+            resetTable();
+        }
+        async function loadClip(){
+            try {
+                var tab=document.getElementById("t_list");
+                resetTable();
+                resetArray();
+                const text = await navigator.clipboard.readText();
+                let row = text.split("\r\n");
+                let col;
+                max = 0;
+                min=999999999999999999999999999999999;
+                cnt = row.length - 1;
+                for (var i = 0; i < cnt; i++)
+                {
+                    col = row[i].split("\t");
+                    //在现有行数后面新增一行（tr）
+                    var newTr = tab.insertRow(tab.rows.length);
+                    
+                    //在newTr（tr）中插入td
+                    var newTd0 = newTr.insertCell(0);//序号
+                    var newTd1 = newTr.insertCell(1);//单位名称
+                    var newTd2 = newTr.insertCell(2);//报价
+                    var newTd3 = newTr.insertCell(3);//得分
+                    var newTd4 = newTr.insertCell(4);//加权得分
+                    var newTd5 = newTr.insertCell(5);//下浮率
+                    
+                    //获取table现有行数
+                    var j = tab.rows.length;
+                    //动态id
+                    var ids = "id" + (j - 1);//（新增前有x个tr就-x，例：若只有表头一行（一个tr），则：-1）
+                    var units = "unit" + (j - 1);//同上
+                    var quotes = "quote" + (j - 1);//同上
+                    var scores = "score" + (j - 1);//同上
+                    
+                    //在对应的td中插入内容
+                    newTd0.innerHTML = col[0];
+                    newTd1.innerHTML = col[1];
+                    newTd2.innerHTML = col[2];
+                    // newTd3.innerHTML = col[3];
+
+                    units[i] = col[1];
+                    quote[i] = parseFloat(col[2]);
+                    quote_v1[i] = quote[i];
+                    max = max < quote[i] ? quote[i] : max;
+                    min = min > quote[i] ? quote[i] : min;
+
+                }
+
+
+            } catch (err) {
+                console.error('无法访问剪贴板: ', err);
+            }
+        }
+        function setArray(arr1,  arr2, low, high)
+        {
+            for (var i = low; i <= high; i++)
+            {
+                arr1[i - low] = arr2[i];
+            }
+        }
+        function calc(q,t){
+            var d = (q - t) / t;
+            if (d < -0.1)
+            {
+                return 80 - 1 * (Math.abs(d) - 0.1) * 100;
+            }
+            else if (d < 0)
+            {
+                return 100 - 2 * Math.abs(d) * 100;
+            }
+            else if (d <= 0.05)
+            {
+                return 100 - 4 * Math.abs(d) * 100;
+            }
+            else if (d <= 0.1)
+            {
+                return 80 - 3 * (Math.abs(d) - 0.05) * 100;
+            }
+            else
+            {
+                return 80 - 1 * (Math.abs(d) - 0.1) * 100;
+            }
+        }
+
+        function QuickSort( arr,  low,  high)
+        {
+            if (low < high)
+            {
+                var pivotIndex = Partition(arr, low, high);
+                QuickSort(arr, low, pivotIndex - 1);
+                QuickSort(arr, pivotIndex + 1, high);
+            }
+        }
+
+        function Partition( arr,  low,  high)
+        {
+            var pivot = arr[high];
+            var i = low - 1;
+
+            for (j = low; j < high; j++)
+            {
+                if (arr[j] <= pivot)
+                {
+                    i++;
+                    Swap(arr, i, j);
+                }
+            }
+
+            Swap(arr, i + 1, high);
+            return i + 1;
+        }
+
+        function Swap( arr,  i,  j)
+        {
+            var temp = arr[i];
+            arr[i] = arr[j];
+            arr[j] = temp;
+        }
+        function calcQuote(){
+            var i, j, k;
+            resetArray();
+            var tab=document.getElementById("t_list");
+            upprice = parseFloat(document.getElementById("upprice").value);
+            qz = parseFloat(document.getElementById("qz").value);
+            document.getElementById("cnt").value = cnt;
+            document.getElementById("max").value  = max;
+            document.getElementById("min").value  = min;
+
+            cnt_v=cnt;
+            
+            max = 0;
+            min=999999999999999999999999999999999;
+            for (var i = 0; i < cnt; i++)
+            {
+                units[i]=tab.rows[i+1].cells[1].innerText;
+                quote[i] = parseFloat(tab.rows[i+1].cells[2].innerText);
+                quote_v1[i] = quote[i];
+                tab.rows[i+1].cells[5].innerText = Math.round(quote[i]/upprice*1000)/10+"%";
+                if (quote[i] / upprice < 0.8)
+                {
+                    quote_v1[i] = 0;
+                    cnt_v--;
+                }
+                max = max < quote[i] ? quote[i] : max;
+                min = min > quote[i] ? quote[i] : min;
+            }
+            document.getElementById("cnt_v").value = cnt_v;
+            if (cnt_v < 3)
+            {
+                QuickSort(quote, 0, cnt - 1);
+                setArray(quote_v2, quote, 0, cnt - 1);
+                cnt_v2 = cnt;
+
+            }
+            else if (cnt_v < 10)
+            {
+                QuickSort(quote_v1, 0, cnt - 1);
+                setArray(quote_v2, quote_v1, cnt - cnt_v, cnt - 1);
+                cnt_v2 = cnt_v;
+
+            }
+            else
+            {
+                QuickSort(quote_v1, 0, cnt - 1);
+                setArray(quote_v2, quote_v1, cnt - cnt_v +  Math.round(cnt_v * 0.1), cnt - 1 -  Math.round(cnt_v * 0.15));
+                cnt_v2 = cnt_v -  Math.round(cnt_v * 0.1) -  Math.round(cnt_v * 0.15);
+
+            }
+            document.getElementById("cnt_v2").value= cnt_v2;
+            //计算算术平均数μ
+            var sum, avr;
+            sum = 0;
+            for (i = 0; i < cnt_v2; i++)
+            {
+                sum = sum + quote_v2[i];
+
+            }
+            avr = sum / cnt_v2;
+            document.getElementById("avr").value = avr;
+
+            // 计算中位数M
+            var mid;
+            k = Math.floor(cnt_v2 / 2);
+            if (cnt_v2 % 2 == 0)
+            {
+
+                mid = (quote_v2[k - 1] + quote_v2[k]) / 2;
+            }
+            else
+            {
+                mid = quote_v2[k];
+
+            }
+            document.getElementById("mid").value = mid;
+
+
+            // 计算四分位数Q1、Q3
+            var Q1, Q3, i1, i3;
+            i1 = 0.25 * (cnt_v2 + 1);
+            i3 = 0.75 * (cnt_v2 + 1);
+
+            var fi1=Math.floor(i1);
+            var fi3=Math.floor(i3);
+            Q1 = quote_v2[fi1-1] + (i1 - fi1) * (quote_v2[fi1] - quote_v2[fi1-1]);
+            Q3 = quote_v2[fi3-1] + (i3 - fi3) * (quote_v2[fi3] - quote_v2[fi3-1]);
+            document.getElementById("Q1").value = Q1;
+            document.getElementById("Q3").value = Q3;
+
+
+            // 计算几何平均数G
+            var avrg,sum2;
+            var temp = 1,temp_mid=mid;
+            while (temp_mid < 1 || temp_mid >= 10) 
+            {
+                if (temp_mid >= 10)
+                {
+                    temp_mid /= 10;
+                    temp *= 10;
+                }
+                else if (temp_mid < 1)
+                {
+                    temp_mid *= 10;
+                    temp /= 10;
+                }
+            }
+            sum2 = 1;
+            for (i = 0; i < cnt_v2; i++)
+            {
+                sum2 *= quote_v2[i]/temp;
+
+            }
+            avrg = Math.pow(sum2, (1.0 / cnt_v2)) * temp;
+            document.getElementById("avrg").value = avrg;
+
+            // 随机权重
+            let u = new Array(8), g = new Array(8);
+            var s1, s2;
+            u[1] = parseFloat(document.getElementById("u1").value);
+            u[2] = parseFloat(document.getElementById("u2").value);
+            u[3] = parseFloat(document.getElementById("u3").value);
+            u[4] = parseFloat(document.getElementById("u4").value);
+            u[5] = parseFloat(document.getElementById("u5").value);
+            u[6] = parseFloat(document.getElementById("u6").value);
+            u[7] = parseFloat(document.getElementById("u7").value);
+
+
+            for (i = 1; i <= 7; i++)
+            {
+                if (u[i] < 1 || u[i] > 9)
+                {
+                    alert("u" + i + "权重参数超出范围[1.00,9.00]。");
+                    return;
+                }
+            }
+
+
+            s1 = u[1] + u[2] + u[3] + u[4];
+            s2 = u[5] + u[6] + u[7];
+            g[1] = u[1] / s1;
+            g[2] = u[2] / s1;
+            g[3] = u[3] / s1;
+            g[4] = u[4] / s1;
+            g[5] = u[5] / s2;
+            g[6] = u[6] / s2;
+            g[7] = u[7] / s2;
+
+
+            if(g[1] < 0.3 || g[1] > 0.45){
+                alert("a权重参数超出范围[30%,45%]");
+                return;
+            } else if(g[2] < 0.05 || g[2] > 0.2) {
+                alert("b权重参数超出范围[5%,20%]");
+                return;
+            } else if(g[3] < 0.05 || g[3] > 0.2) {
+                alert("c权重参数超出范围[5%,20%]");
+                return;
+            } else if(g[4] < 0.3 || g[4] > 0.45) {
+                alert("d权重参数超出范围[30%,45%]");
+                return;
+            } else if(g[5] < 0.35 || g[5] > 0.5) {
+                alert("e权重参数超出范围[35%,50%]");
+                return;
+            }
+            else if(g[6] < 0.05 || g[6] > 0.3) {
+                alert("f权重参数超出范围[5%,30%]");
+                return;
+            }
+            else if(g[7] < 0.35 || g[7] > 0.5) {
+                alert("g权重参数超出范围[35%,50%]");
+                return;
+            }
+            document.getElementById("a").innerText = "a:"+g[1].toFixed(1)*100+"%";
+            document.getElementById("b").innerText = "b:"+g[2].toFixed(3)*100+"%";
+            document.getElementById("c").innerText = "c:"+g[3].toFixed(3)*100+"%";
+            document.getElementById("d").innerText = "d:"+g[4].toFixed(3)*100+"%";
+            document.getElementById("e").innerText = "e:"+g[5].toFixed(3)*100+"%";
+            document.getElementById("f").innerText = "f:"+g[6].toFixed(3)*100+"%";
+            document.getElementById("g").innerText = "g:"+g[7].toFixed(3)*100+"%";
+
+
+            //计算平均价C
+            var avrc;
+            if (cnt_v2 >= 5)
+            {
+                avrc = g[1] * avr + g[2] * mid + g[3] * (Q1 + Q3) / 2 + g[4] * avrg;
+            }
+            else
+            {
+                avrc = g[5] * avr + g[6] * mid + g[7] * avrg;
+
+            }
+            document.getElementById("avrc").value = avrc;
+
+
+            // 评标基准价T
+            var t, c1, r;
+            c1 = parseFloat(document.getElementById("c1").value);
+            r = parseFloat(document.getElementById("r").value);
+            t = ((upprice * c1) + (avrc * (1 - c1))) * (1 - r);
+            document.getElementById("t").value = t;
+
+            // 计算每家公司的得分
+            var s,z;
+            z = 0;
+            var result = "";
+            for (i = 1; i <= cnt; i++)
+            {
+                s =  calc(quote[i-1], t).toFixed(3);
+                tab.rows[i].cells[3].innerText = s;
+                tab.rows[i].cells[4].innerText = (s*qz).toFixed(3);
+                if (z < s)
+                {
+                    z = s;
+                    result = "序号" + tab.rows[i].cells[0].innerText + "，" + tab.rows[i].cells[1].innerText+ "，报价：" + tab.rows[i].cells[2].innerText+ "，得分：" + tab.rows[i].cells[3].innerText;
+                }
+
+            }
+            //alert(result);
+            document.getElementById("result").innerText = result;
+
+        }
+    </script>
+</head>
+<body>
+    <h1 style="text-align: center;">投标报价计算</h1>
+    <table>
+        <tr>
+            <td style="width: 150px;">最高投标限价</td><td><input id="upprice" type="text"  style="width: 100px;"/></td>
+            <td style="width: 50px;">u1</td><td><input id="u1" style="width: 75px;" type="text" /></td><td id="a"  style="width: 75px;"></td>
+            <td style="width: 200px;">报价单位数</td><td><input id="cnt" style="width: 100px;" type="text" /></td>
+            <td style="width: 150px;">中位数M</td><td><input id="mid" style="width: 100px;" type="text" /></td>
+        </tr>
+        <tr>
+            <td style="width: 150px;">比例系数C1</td><td><input id="c1" type="text"  style="width: 100px;"/></td>
+            <td style="width: 50px;">u2</td><td><input id="u2" style="width: 75px;" type="text" /></td><td id="b"  style="width: 75px;"></td>
+            <td style="width: 200px;">有效报价单位数</td><td><input id="cnt_v" style="width: 100px;" type="text" /></td>
+            <td style="width: 150px;">四分位数Q1</td><td><input id="Q1" style="width: 100px;" type="text" /></td>
+        </tr>
+        <tr>
+            <td style="width: 150px;">下浮系数r</td><td><input id="r" type="text"  style="width: 100px;"/></td>
+            <td style="width: 50px;">u3</td><td><input id="u3" style="width: 75px;" type="text" /></td><td id="c"  style="width: 75px;"></td>
+            <td style="width: 200px;">纳入基准价计算单位数</td><td><input id="cnt_v2" style="width: 100px;" type="text" /></td>
+            <td style="width: 150px;">四分位数Q3</td><td><input id="Q3" style="width: 100px;" type="text" /></td>
+        </tr>
+        <tr>
+            <td rowspan="4" colspan="2">
+                <button onclick="loadClip()" style="width: 100px;height: 40px;">导入剪贴板</button>
+                <button onclick="calcQuote()" style="width: 100px;height: 40px;">计算</button>
+            </td>
+            <td style="width: 50px;">u4</td><td><input id="u4" style="width: 75px;" type="text" /></td><td id="d"  style="width: 75px;"></td>
+            <td style="width: 200px;">算术平均数</td><td><input id="avr" style="width: 100px;" type="text" /></td>
+            <td style="width: 150px;">几何平均数G</td><td><input id="avrg" style="width: 100px;" type="text" /></td>
+        </tr>
+        <tr>
+            <td style="width: 50px;">u5</td><td><input id="u5" style="width: 75px;" type="text" /></td><td id="e"  style="width: 75px;"></td>
+            <td style="width: 200px;">最高报价</td><td><input id="max" style="width: 100px;" type="text" /></td>
+            <td style="width: 150px;">平均价C</td><td><input id="avrc" style="width: 100px;" type="text" /></td>
+        </tr>
+        <tr>
+            <td style="width: 50px;">u6</td><td><input id="u6" style="width: 75px;" type="text" /></td><td id="f"  style="width: 75px;"></td>
+            <td style="width: 200px;">最低报价</td><td><input id="min" style="width: 100px;" type="text" /></td>
+            <td style="width: 150px;">评标基准价T</td><td><input id="t" style="width: 100px;" type="text" /></td>
+        </tr>
+        <tr>
+            <td style="width: 50px;">u7</td><td><input id="u7" style="width: 75px;" type="text" /></td><td id="g"  style="width: 75px;"></td>
+            <td style="width: 200px;">报价权重</td><td><input id="qz" style="width: 100px;" type="text" /></td>
+            <td style="width: 150px;"></td><td></td>
+        </tr>
+        <tr>
+            <td>最高报价</td>
+            <td id="result" colspan="8"></td>
+        </tr>
+    </table>
+    <table id="t_list">
+        <tr>
+            <th  style="width: 50px;">序号</th><th style="width: 450px;">单位名称</th><th style="width: 150px;">报价</th>
+            <th style="width: 150px;">得分</th><th style="width: 150px;">加权得分</th><th style="width: 150px;">下浮率</th>
+        </tr>
+    </table>
+</body>
+</html>
