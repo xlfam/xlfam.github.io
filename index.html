@@ -143,6 +143,15 @@ input,button{font-family:inherit;}
 .content-area{
   flex:1;padding:16px 24px;overflow-y:auto;overflow-x:hidden;
   -webkit-overflow-scrolling:touch;min-height:0;scroll-behavior:smooth;
+  /* 隐藏滚动条（保留滚动功能） */
+  scrollbar-width: none;      /* Firefox */
+  -ms-overflow-style: none;   /* IE / 旧 Edge */
+}
+/* Chrome / Safari / 新 Edge */
+.content-area::-webkit-scrollbar{
+  width: 0;
+  height: 0;
+  display: none;
 }
 .category-section{margin-bottom:26px;scroll-margin-top:16px;}
 .content-title{
