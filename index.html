@@ -352,6 +352,7 @@ input,button{font-family:inherit;}
         <button class="btn btn-outline" onclick="cloudDownload()"><i class="fas fa-cloud-arrow-down"></i> 下载</button>
       </div>
       <div class="cloud-status" id="cloudStatus">未配置</div>
+      <div class="cloud-status" id="versionStatus" style="font-family:ui-monospace,monospace;"></div>
 
       <div class="panel-divider"></div>
 
@@ -509,7 +510,7 @@ function setCloudStatus(text, type) {
 function normalize(d) {
   d = d || {};
   const out = {
-    version: 1,
+    version: parseInt(d.version, 10) || 1,
     searchEngines: (Array.isArray(d.searchEngines) && d.searchEngines.length)
       ? d.searchEngines.filter(e => e && e.url).map(e => ({
           name: e.name || '搜索引擎',
@@ -624,31 +625,33 @@ async function cloudSyncSmart() {
   let remote = null;
   try { remote = await cloudGet(); } catch (e) { remote = null; }
 
-  if (remote && Array.isArray(remote.categories)) {
-    const useCloud = confirm(
-      '云端已有数据（' + remote.categories.length + ' 个分类）\n\n' +
-      '点击【确定】= 用云端数据覆盖本地\n' +
-      '点击【取消】= 用本地数据覆盖云端'
-    );
-    if (useCloud) {
-      state.data = normalize(remote);
-      saveLocal();
-      render();
-      setCloudStatus('已从云端同步到本地', 'ok');
-      toast('已从云端同步', 'ok');
-    } else {
-      try {
-        await cloudPut(state.data);
-        setCloudStatus('已上传本地数据到云端', 'ok');
-        toast('已上传到云端', 'ok');
-      } catch (e) { setCloudStatus('上传失败：' + e.message, 'err'); toast('上传失败', 'err'); }
-    }
-  } else {
+  const localVer  = parseInt(state.data.version, 10) || 0;
+  const remoteVer = remote ? (parseInt(remote.version, 10) || 0) : 0;
+
+  if (!remote || !Array.isArray(remote.categories)) {
     try {
       await cloudPut(state.data);
-      setCloudStatus('云端无数据，已上传本地配置', 'ok');
+      setCloudStatus(`云端无数据，已上传 v${localVer}`, 'ok');
       toast('已创建云端配置', 'ok');
-    } catch (e) { setCloudStatus('上传失败：' + e.message, 'err'); toast('上传失败：' + e.message, 'err'); }
+    } catch (e) { setCloudStatus('上传失败：' + e.message, 'err'); }
+    return;
+  }
+
+  if (localVer < remoteVer) {
+    if (!confirm(`云端 v${remoteVer} 比本地 v${localVer} 新，用云端覆盖本地？`)) return;
+    state.data = normalize(remote);
+    saveLocal();
+    render();
+    setCloudStatus(`已从云端更新到 v${remoteVer}`, 'ok');
+  } else if (localVer > remoteVer) {
+    if (!confirm(`本地 v${localVer} 比云端 v${remoteVer} 新，用本地覆盖云端？`)) return;
+    try {
+      await cloudPut(state.data);
+      setCloudStatus(`已上传本地 v${localVer}`, 'ok');
+    } catch (e) { setCloudStatus('上传失败：' + e.message, 'err'); }
+  } else {
+    setCloudStatus(`版本一致 v${localVer}`, 'ok');
+    toast('已是最新');
   }
 }
 
@@ -657,7 +660,7 @@ async function cloudUpload() {
   setCloudStatus('正在上传...', 'warn');
   try {
     await cloudPut(state.data);
-    setCloudStatus('上传成功 ' + new Date().toLocaleTimeString(), 'ok');
+    setCloudStatus(`上传成功 v${state.data.version} ` + new Date().toLocaleTimeString(), 'ok');
     toast('上传成功', 'ok');
   } catch (e) {
     setCloudStatus('上传失败：' + e.message, 'err');
@@ -674,7 +677,7 @@ async function cloudDownload() {
     state.data = normalize(remote);
     saveLocal();
     render();
-    setCloudStatus('下载成功 ' + new Date().toLocaleTimeString(), 'ok');
+    setCloudStatus(`下载成功 v${state.data.version} ` + new Date().toLocaleTimeString(), 'ok');
     toast('已从云端下载', 'ok');
   } catch (e) {
     setCloudStatus('下载失败：' + e.message, 'err');
@@ -696,6 +699,48 @@ function schedulePush() {
   }, 2000);
 }
 
+async function syncFromCloudOnBoot() {
+  setCloudStatus('正在检查云端版本...', 'warn');
+
+  let remote;
+  try {
+    remote = await cloudGet();
+  } catch (e) {
+    if (/HTTP 404/.test(e.message)) {
+      setCloudStatus('云端暂无文件，使用本地数据', 'warn');
+    } else {
+      setCloudStatus('云端读取失败，使用本地数据', 'err');
+      toast('云端读取失败，使用本地数据', 'err');
+    }
+    return;
+  }
+
+  const localVer  = parseInt(state.data.version, 10) || 0;
+  const remoteVer = parseInt(remote.version, 10)  || 0;
+
+  if (localVer < remoteVer) {
+    // 云端较新 → 覆盖本地缓存
+    state.data = normalize(remote);
+    saveLocal();
+    render();
+    setCloudStatus(`已从云端更新（v${localVer} → v${remoteVer}）`, 'ok');
+    toast(`配置已更新到 v${remoteVer}`, 'ok');
+
+  } else if (localVer > remoteVer) {
+    // 本地较新（上次修改未上传成功）→ 补传
+    setCloudStatus(`本地 v${localVer} 较新，正在上传...`, 'warn');
+    try {
+      await cloudPut(state.data);
+      setCloudStatus(`已上传本地修改（v${localVer}）`, 'ok');
+      toast('本地修改已上传', 'ok');
+    } catch (e) {
+      setCloudStatus(`上传失败：${e.message}（本地保留 v${localVer}）`, 'err');
+    }
+
+  } else {
+    setCloudStatus(`版本一致 v${localVer}`, 'ok');
+  }
+}
 /* =========================================================
  *  启动
  * =======================================================*/
@@ -707,25 +752,7 @@ async function boot() {
   try { cloudCfg = JSON.parse(localStorage.getItem(LS.CLOUD) || 'null'); } catch (e) { cloudCfg = null; }
 
   const local = loadLocal();
-
-  if (local) {
-    state.data = normalize(local);
-  } else if (cloudCfg && cloudCfg.url) {
-    setCloudStatus('正在从云端加载...', 'warn');
-    try {
-      const remote = await cloudGet();
-      state.data = normalize(remote);
-      saveLocal();
-      setCloudStatus('已从云端加载', 'ok');
-    } catch (e) {
-      state.data = defaultData();
-      saveLocal();
-      setCloudStatus('云端加载失败，使用默认数据', 'err');
-    }
-  } else {
-    state.data = defaultData();
-    saveLocal();
-  }
+  state.data = local ? normalize(local) : defaultData();
 
   bindEvents();
   buildEngineMenu();
@@ -735,7 +762,9 @@ async function boot() {
   if (cloudCfg && cloudCfg.url) {
     fillCloudForm();
     setCloudStatus('已保存配置：' + cloudCfg.url, 'ok');
+    await syncFromCloudOnBoot();       // ← 新增：按 version 比较
   } else {
+    saveLocal();
     // 首次访问才引导配置
     setTimeout(() => {
       openSettings();
@@ -762,6 +791,12 @@ function render() {
     });
   }
   updateEngineHint();
+  updateVersionStatus();
+}
+
+function updateVersionStatus() {
+  const el = document.getElementById('versionStatus');
+  if (el) el.textContent = '当前配置版本：v' + (state.data.version || 1);
 }
 
 function resolveUrl(item) {
@@ -1129,6 +1164,7 @@ function deleteCategory(catId) {
  *  提交变更
  * =======================================================*/
 function commit() {
+  state.data.version = (parseInt(state.data.version, 10) || 0) + 1;
   saveLocal();
   render();
   schedulePush();
@@ -1155,10 +1191,19 @@ function importData(input) {
     try {
       const data = JSON.parse(String(reader.result));
       if (!data || !Array.isArray(data.categories)) throw new Error('格式不正确');
-      if (!confirm('导入将覆盖当前所有数据，确定继续？')) return;
+      if (!confirm('导入将覆盖当前所有数据，确定继续？')) { input.value = ''; return; }
+
+      const localVer = parseInt(state.data.version, 10) || 0;
+      const fileVer  = parseInt(data.version, 10)      || 0;
+
       state.data = normalize(data);
-      commit();
-      toast('导入成功', 'ok');
+      // 保证本地版本比云端/导入值都大，避免加载时被覆盖
+      state.data.version = Math.max(localVer, fileVer) + 1;
+
+      saveLocal();
+      render();
+      schedulePush();     // 触发自动上传
+      toast(`导入成功（v${state.data.version}）`, 'ok');
     } catch (e) {
       toast('导入失败：' + e.message, 'err');
     } finally {
