@@ -131,6 +131,7 @@ input,button{font-family:inherit;}
 }
 .btn-primary{background:var(--primary);color:#fff;}
 .btn-primary:hover{background:#2563eb;}
+.btn:disabled{opacity:.6;cursor:not-allowed;}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text);}
 .btn-outline:hover{background:var(--hover);}
 .btn-danger{background:var(--danger);color:#fff;}
@@ -307,6 +308,9 @@ input,button{font-family:inherit;}
       </div>
 
       <div class="toolbar-actions">
+        <button class="icon-btn" id="btnIconUpload" onclick="openIconUpload()" title="上传图标">
+          <i class="fas fa-upload"></i>
+        </button>
         <button class="icon-btn" id="btnSettings" onclick="toggleSettings(event)" title="设置">
           <i class="fas fa-gear"></i>
         </button>
@@ -356,6 +360,27 @@ input,button{font-family:inherit;}
 
       <div class="panel-divider"></div>
 
+      <div class="panel-title"><i class="fas fa-upload"></i> 图标上传（Aria2 RPC）</div>
+      <div class="form-group">
+        <label>RPC 地址</label>
+        <input id="ariaRpc" placeholder="http://127.0.0.1:6800/jsonrpc">
+      </div>
+      <div class="form-group">
+        <label>RPC Secret（可留空）</label>
+        <input id="ariaSecret" type="password" placeholder="aria2 的 token 密钥">
+      </div>
+      <div class="form-group">
+        <label>保存目录（可留空，使用 aria2 默认目录）</label>
+        <input id="ariaDir" placeholder="/data/icons">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-outline" onclick="testAria()"><i class="fas fa-plug"></i> 测试连接</button>
+      </div>
+      <div class="cloud-status" style="text-align:left;opacity:.75">跨域调用需 aria2 启动时加 --rpc-allow-origin-all</div>
+      <div class="cloud-status" id="ariaStatus">未配置</div>
+
+      <div class="panel-divider"></div>
+
       <div class="panel-title"><i class="fas fa-database"></i> 本地备份</div>
       <div class="btn-row">
         <button class="btn btn-outline" onclick="exportData()"><i class="fas fa-file-export"></i> 导出</button>
@@ -385,7 +410,8 @@ const LS = {
   CLOUD:  'nav_cloud_v3',
   MODE:   'nav_mode_v3',
   ENGINE: 'nav_engine_v3',
-  EDIT:   'nav_edit_v3'
+  EDIT:   'nav_edit_v3',
+  ARIA:   'nav_aria_v3'
 };
 
 const DEFAULT_ENGINES = [
@@ -433,6 +459,7 @@ const state = {
   engineIndex: 0
 };
 let cloudCfg = null;
+let ariaCfg = null;
 let pushTimer = null;
 
 /* =========================================================
@@ -499,6 +526,13 @@ function toast(msg, type) {
 
 function setCloudStatus(text, type) {
   const el = document.getElementById('cloudStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'cloud-status' + (type ? ' ' + type : '');
+}
+
+function setAriaStatus(text, type) {
+  const el = document.getElementById('ariaStatus');
   if (!el) return;
   el.textContent = text;
   el.className = 'cloud-status' + (type ? ' ' + type : '');
@@ -741,6 +775,150 @@ async function syncFromCloudOnBoot() {
     setCloudStatus(`版本一致 v${localVer}`, 'ok');
   }
 }
+
+/* =========================================================
+ *  图标上传（Aria2 RPC）
+ * =======================================================*/
+function fillAriaForm() {
+  if (!ariaCfg) return;
+  const r = document.getElementById('ariaRpc');
+  const s = document.getElementById('ariaSecret');
+  const d = document.getElementById('ariaDir');
+  if (r) r.value = ariaCfg.rpc || '';
+  if (s) s.value = ariaCfg.secret || '';
+  if (d) d.value = ariaCfg.dir || '';
+}
+
+/** 读取表单并保存到本地；RPC 为空返回 null */
+function readAriaForm() {
+  const rpc = val('ariaRpc').trim();
+  if (!rpc) return null;
+  ariaCfg = { rpc, secret: val('ariaSecret'), dir: val('ariaDir').trim() };
+  try { localStorage.setItem(LS.ARIA, JSON.stringify(ariaCfg)); } catch (e) {}
+  return ariaCfg;
+}
+
+/** 输入变化即时保存，与 WebDAV 配置一致 */
+function persistAriaForm() {
+  const rpc = val('ariaRpc').trim();
+  if (!rpc) {
+    ariaCfg = null;
+    try { localStorage.removeItem(LS.ARIA); } catch (e) {}
+    setAriaStatus('未配置', '');
+    return;
+  }
+  readAriaForm();
+  setAriaStatus('配置已保存到本地', 'ok');
+}
+
+/** 通用 Aria2 JSON-RPC 调用 */
+async function aria2Rpc(cfg, method, extraParams) {
+  const params = [];
+  if (cfg.secret) params.push('token:' + cfg.secret);
+  (extraParams || []).forEach(p => params.push(p));
+
+  let res;
+  try {
+    res = await fetch(cfg.rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'nav_' + Date.now(), method, params })
+    });
+  } catch (e) {
+    throw new Error('无法连接 Aria2（请检查地址、CORS 以及 HTTPS 页面的混合内容限制）');
+  }
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  let json;
+  try { json = await res.json(); } catch (e) { throw new Error('响应不是有效 JSON'); }
+  if (json.error) throw new Error(json.error.message || ('错误码 ' + json.error.code));
+  return json.result;
+}
+
+async function testAria() {
+  const cfg = readAriaForm();
+  if (!cfg) { setAriaStatus('请先填写 RPC 地址', 'err'); return; }
+  setAriaStatus('正在测试连接...', 'warn');
+  try {
+    const v = await aria2Rpc(cfg, 'aria2.getVersion');
+    setAriaStatus('连接成功 Aria2 v' + (v && v.version ? v.version : '?'), 'ok');
+    toast('Aria2 连接正常', 'ok');
+  } catch (e) {
+    setAriaStatus('连接失败：' + e.message, 'err');
+  }
+}
+
+function openIconUpload() {
+  const cfg = readAriaForm();
+  if (!cfg) {
+    openSettings();
+    setAriaStatus('请先填写 Aria2 RPC 地址后再上传', 'warn');
+    toast('请先配置 Aria2 RPC', 'err');
+    return;
+  }
+
+  openModal(`
+    <h3>上传图标</h3>
+    <div class="form-group">
+      <label>图片链接 *</label>
+      <input id="u_url" placeholder="https://example.com/logo.png">
+    </div>
+    <div class="form-group">
+      <label>保存文件名 *</label>
+      <input id="u_name" placeholder="例如：logo.png">
+    </div>
+    <div class="cloud-status" id="u_status">保存位置：${esc(cfg.dir ? cfg.dir + '/' : '(aria2 默认目录)/')}</div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" id="u_submit" onclick="submitIconUpload()">
+        <i class="fas fa-upload"></i> 上传
+      </button>
+    </div>
+  `);
+
+  setTimeout(() => { const el = document.getElementById('u_url'); if (el) el.focus(); }, 60);
+}
+
+async function submitIconUpload() {
+  const uri  = val('u_url').trim();
+  const name = val('u_name').trim();
+  const st   = document.getElementById('u_status');
+  const btn  = document.getElementById('u_submit');
+  const setU = (t, c) => { if (st) { st.textContent = t; st.className = 'cloud-status' + (c ? ' ' + c : ''); } };
+
+  if (!uri) { setU('请填写图片链接', 'err'); return; }
+  if (!/^https?:\/\//i.test(uri)) { setU('图片链接需以 http:// 或 https:// 开头', 'err'); return; }
+  if (!name) { setU('请填写保存文件名', 'err'); return; }
+  // 不校验后缀，仅限制路径分隔符，避免 aria2 报错
+  if (/[\/\\]/.test(name)) { setU('文件名不能包含路径分隔符', 'err'); return; }
+
+  const cfg = readAriaForm();
+  if (!cfg) { setU('请先在设置中配置 Aria2 RPC 地址', 'err'); return; }
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 上传中...'; }
+  setU('正在提交下载任务...', 'warn');
+
+  try {
+    const gid = await aria2Rpc(cfg, 'aria2.addUri', [
+      [uri],
+      {
+        out: name,
+        dir: cfg.dir || undefined,
+        'allow-overwrite': 'true',
+        'auto-file-renaming': 'false'
+      }
+    ]);
+    setU('已提交 gid=' + gid + '，保存为 ' + (cfg.dir ? cfg.dir + '/' : '') + name, 'ok');
+    toast('图标上传任务已提交', 'ok');
+    const nameEl = document.getElementById('u_name');
+    if (nameEl) nameEl.value = '';
+  } catch (e) {
+    setU('上传失败：' + e.message, 'err');
+    toast('上传失败：' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-upload"></i> 上传'; }
+  }
+}
+
 /* =========================================================
  *  启动
  * =======================================================*/
@@ -750,6 +928,7 @@ async function boot() {
   state.engineIndex = parseInt(localStorage.getItem(LS.ENGINE) || '0', 10) || 0;
 
   try { cloudCfg = JSON.parse(localStorage.getItem(LS.CLOUD) || 'null'); } catch (e) { cloudCfg = null; }
+  try { ariaCfg  = JSON.parse(localStorage.getItem(LS.ARIA)  || 'null'); } catch (e) { ariaCfg = null; }
 
   const local = loadLocal();
   state.data = local ? normalize(local) : defaultData();
@@ -757,6 +936,14 @@ async function boot() {
   bindEvents();
   buildEngineMenu();
   render();
+
+  // Aria2 配置回填
+  if (ariaCfg && ariaCfg.rpc) {
+    fillAriaForm();
+    setAriaStatus('已保存配置：' + ariaCfg.rpc, 'ok');
+  } else {
+    setAriaStatus('未配置', '');
+  }
 
   // 配置回填：有配置就直接显示，不再要求重新填写
   if (cloudCfg && cloudCfg.url) {
@@ -992,7 +1179,7 @@ function toggleSettings(ev) {
   const panel = document.getElementById('settingsPanel');
   panel.classList.toggle('open');
   document.getElementById('btnSettings').classList.toggle('active', panel.classList.contains('open'));
-  if (panel.classList.contains('open')) fillCloudForm();
+  if (panel.classList.contains('open')) { fillCloudForm(); fillAriaForm(); }
 }
 
 function openSettings() {
@@ -1000,6 +1187,7 @@ function openSettings() {
   panel.classList.add('open');
   document.getElementById('btnSettings').classList.add('active');
   fillCloudForm();
+  fillAriaForm();
 }
 
 function setMode(mode) {
@@ -1278,6 +1466,12 @@ function bindEvents() {
   ['cloudUrl', 'cloudUser', 'cloudPass'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', persistCloudForm);
+  });
+
+  // Aria2 配置输入变化自动保存
+  ['ariaRpc', 'ariaSecret', 'ariaDir'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', persistAriaForm);
   });
 
   document.addEventListener('click', e => {
